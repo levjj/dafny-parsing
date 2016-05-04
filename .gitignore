@@ -1,0 +1,5 @@
+*.dll
+*.mdb
+*.exe
+Parsing.cs
+Example.cs

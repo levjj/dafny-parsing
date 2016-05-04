@@ -1,10 +1,3 @@
-# dafny-parsing
-
-Parser combinator library for Dafny
-
-## Example
-
-```dafny
 include "Parsing.dfy"
 
 module Example {
@@ -15,4 +8,3 @@ module Example {
     print(Parse(DigitP(), "X")); // None
   }
 }
-```
