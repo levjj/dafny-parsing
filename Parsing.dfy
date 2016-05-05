@@ -20,15 +20,21 @@ module Parsing {
     SatP(c => 'A' <= c <= 'Z' || 'a' <= c <= 'z' || c == '_')
   }
 
-  /*function method ThenP<A,B>(p1: Parser<A>, p2: Parser<B>): Parser<A>
-  {
-    p1
-  }*/
-
   function method OrP<A>(p1: Parser<A>, p2: Parser<A>): Parser<A>
   {
-    p1
+    Parser((s: string) reads p1.run.reads reads p2.run.reads
+                       requires p1.run.requires(s) requires p2.run.requires(s)
+                       => p1.run(s) + p2.run(s))
   }
+
+  /* function method ThenP<A>(pa: Parser<A>, pb: A -> Parser<B>): Parser<B> */
+  /* { */
+  /*   Parser((s: string) reads pa.run.reads */
+  /*                      requires pa.run.requires(s) */
+  /*                      => { var par: seq<(A, string)> := pa.run(s); */
+  /*                            + p2.run(s)) */
+  /* } */
+
 
   /*function method ManyP(p: Parser<A>): Parser<seq<A>>
   {
