@@ -1,32 +1,16 @@
 module Parsing {
-  datatype Parser<A> = Parser(run: string -> seq<(A, string)>)
-
   datatype Option<A> = Some(some: A) | None
 
-  module Helpers {
-    function method Map<A,B>(a: seq<A>, f: A -> B): seq<B>
-    reads *;
-    requires forall x: A :: f.requires(x)
-    {
-      if |a| == 0 then []
-                  else [f(a[0])] + Map<A,B>(a[1..], f)
-    }
+  datatype Parser<A> = Parser(run: string -> Option<(A, string)>)
 
-    function method Flatten<A>(a: seq<seq<A>>): seq<A>
-    {
-      if |a| == 0 then []
-                  else a[0] + Flatten(a[1..])
-    }
-
-    class FileSystem {
-      extern static method ReadFile(name:array<char>) returns (contents: array<char>)
-    }
+  class FileSystem {
+    extern static method ReadFile(name:array<char>) returns (contents: array<char>)
   }
 
   function method Const<A>(a: A): Parser<A>
   ensures forall s:string :: Const(a).run.requires(s);
   {
-    Parser(s => [(a, s)])
+    Parser(s => Some((a, s)))
   }
 
   function method Map<A,B>(p: Parser<A>, f: A -> B): Parser<B>
@@ -38,10 +22,10 @@ module Parsing {
     Parser((s: string) reads *
                        requires p.run.requires(s)
                        requires forall a: A :: f.requires(a)
-                       => Helpers.Map(p.run(s),
-                                      (a_s: (A, string)) reads *
-                                      requires forall a: A :: f.requires(a)
-                                      => (f(a_s.0), a_s.1)))
+                       => (var t: Option<(A,string)> := p.run(s);
+                           if t.None?
+                            then None
+                            else Some((f(t.some.0), t.some.1))))
   }
 
   function method SatChar(pred: char -> bool): Parser<char>
@@ -51,9 +35,9 @@ module Parsing {
   {
     Parser((s: string) reads *
                        requires |s| > 0 ==> pred.requires(s[0])
-                       => if |s| == 0 then []
-                          else if pred(s[0]) then [(s[0], s[1..])]
-                          else [])
+                       => if |s| == 0 then None
+                          else if pred(s[0]) then Some((s[0], s[1..]))
+                          else None)
   }
 
   function method Or<A>(p1: Parser<A>, p2: Parser<A>): Parser<A>
@@ -64,7 +48,10 @@ module Parsing {
   {
     Parser((s: string) reads *
                        requires p1.run.requires(s) requires p2.run.requires(s)
-                       => p1.run(s) + p2.run(s))
+                       => (var t: Option<(A,string)> := p1.run(s);
+                           if t.Some?
+                            then t
+                            else p2.run(s)))
   }
 
   function method Char(c: char): Parser<char>
@@ -99,16 +86,9 @@ module Parsing {
                   reads *
                   requires pa.run.requires(s)
                   requires forall a: A :: pb.requires(a)
-                  requires forall a: A, s: string :: pb(a).run.requires(s) =>
-    (
-      var par: seq<(A, string)> := pa.run(s);
-      var pcomb: seq<seq<(B, string)>> := Helpers.Map(par, (a_s: (A, string))
-                      reads *
-                      requires forall a:A :: pb.requires(a)
-                      requires forall a:A, s:string :: pb(a).run.requires(s)
-                      => pb(a_s.0).run(a_s.1));
-      Helpers.Flatten(pcomb)
-    ))
+                  requires forall a: A, s: string :: pb(a).run.requires(s) => (
+      var t: Option<(A,string)> := pa.run(s);
+      if t.None? then None else pb(t.some.0).run(t.some.1)))
   }
 
   function method Seq<A,B,C>(pa: Parser<A>, pb: Parser<B>, f: (A,B) -> C): Parser<C>
@@ -157,6 +137,15 @@ module Parsing {
     Or(Skip(pa, pb), pa)
   }
 
+  function method SkipWS<A>(p: Parser<A>): Parser<A>
+  reads *;
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: SkipWS(p).run.requires(s);
+  {
+    var ws: Parser<string> := ZeroOrMore(Or(Or(Char(' '), Char('\t')), Char('\n')));
+    Then(ws, Skip(p, ws))
+  }
+
   function method ZeroOrMoreLim<A>(p: Parser<A>, limit: nat): Parser<seq<A>>
   reads *;
   requires forall s:string :: p.run.requires(s);
@@ -184,7 +173,7 @@ module Parsing {
   requires forall s:string :: p.run.requires(s);
   ensures forall s:string :: OneOrMore(p).run.requires(s);
   {
-    ZeroOrMoreLim(p, 1000)
+    OneOrMoreLim(p, 100)
   }
 
   function method ZeroOrMore<A>(p: Parser<A>): Parser<seq<A>>
@@ -192,37 +181,48 @@ module Parsing {
   requires forall s:string :: p.run.requires(s);
   ensures forall s:string :: ZeroOrMore(p).run.requires(s);
   {
-    OneOrMoreLim(p, 1000)
+    OneOrMoreLim(p, 100)
   }
 
-  function method Lazy<A>(f: () -> Parser<A>): Parser<A>
+  function method ZCombLim<A>(f: Parser<A> -> Parser<A>, limit: nat): Parser<A>
+  decreases limit;
   reads *;
-  requires f.requires();
-  requires forall s:string :: f().run.requires(s);
-  ensures forall s:string :: Lazy(f).run.requires(s);
+  requires f.requires(Parser(s => None));
+  requires forall pa: Parser<A> :: f.requires(pa) ==> f.requires(f(pa));
+  requires forall s:string, pa: Parser<A> :: f.requires(pa) && pa.run.requires(s) ==> f(pa).run.requires(s);
+  ensures f.requires(ZCombLim(f, limit));
+  ensures forall s:string :: ZCombLim(f, limit).run.requires(s);
   {
-    Parser((s: string) reads *
-                       requires f.requires()
-                       requires f().run.requires(s)
-                       => f().run(s))
+    if limit == 0
+    then Parser(s => None)
+    else f(ZCombLim(f, limit - 1))
+  }
+
+  function method ZComb<A>(f: Parser<A> -> Parser<A>): Parser<A>
+  reads *;
+  requires f.requires(Parser(s => None));
+  requires forall pa: Parser<A> :: f.requires(pa) ==> f.requires(f(pa));
+  requires forall s:string, pa: Parser<A> :: f.requires(pa) && pa.run.requires(s) ==> f(pa).run.requires(s);
+  ensures f.requires(ZComb(f));
+  ensures forall s:string :: ZComb(f).run.requires(s);
+  {
+    ZCombLim(f, 32)
   }
 
   function method Parse<A>(parser: Parser<A>, str: string): Option<A>
   reads *;
   requires forall s:string :: parser.run.requires(s);
   {
-    var results := parser.run(str);
-    if |results| == 0
-    then Option.None
-    else Option.Some(results[0].0)
+    var t: Option<(A, string)> := parser.run(str);
+    if t.None? then None else if |t.some.1| > 0 then None else Some(t.some.0)
   }
 
   method ParseFile<A>(parser: Parser<A>, filename: string) returns (res: Option<A>)
   requires forall s : string :: parser.run.requires(s)
   {
     var fname: array<char> := new char[|filename|];
-    var contents: array<char> := Helpers.FileSystem.ReadFile(fname);
-    if contents == null { return Option.None; }
+    var contents: array<char> := FileSystem.ReadFile(fname);
+    if contents == null { return None; }
     assert forall s : string :: parser.run.requires(s);
     var parseResult := Parse(parser, contents[..]);
     return parseResult;
