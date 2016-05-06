@@ -79,16 +79,11 @@ module Parsing {
   }
 
   function method Then<A,B>(pa: Parser<A>, pb: A -> Parser<B>): Parser<B>
-  reads pa.run.reads;
-  reads pb.reads;
-  reads set a,s,o | o in pb(a).run.reads(s) :: o;
+  reads *;
   requires forall s:string :: pa.run.requires(s);
   requires forall a:A :: pb.requires(a);
   requires forall a:A, s:string :: pb(a).run.requires(s);
   ensures forall s:string :: Then(pa, pb).run.requires(s);
-  ensures forall s:string :: Then(pa, pb).run.reads(s) <=
-    (set a,s,o | o in pa.run.reads(s) + pb.reads(a) + pb(a).run.reads(s) :: o);
-    /* pa.run.reads(s) + pb.reads + (set a,s,o | o in pb(a).run.reads(s) :: o); */
   {
     Parser((s: string)
                   reads *
@@ -98,8 +93,7 @@ module Parsing {
     (
       var par: seq<(A, string)> := pa.run(s);
       var pcomb: seq<seq<(B, string)>> := Helpers.Map(par, (a_s: (A, string))
-                      reads pb.reads
-                      reads (set a,s,o | o in pb.reads(a) + pb(a).run.reads(s) :: o)
+                      reads *
                       requires forall a:A :: pb.requires(a)
                       requires forall a:A, s:string :: pb(a).run.requires(s)
                       => pb(a_s.0).run(a_s.1));
@@ -107,32 +101,27 @@ module Parsing {
     ))
   }
 
-  /* function method Seq<A,B,C>(pa: Parser<A>, pb: Parser<B>, f: (A,B) -> C): Parser<C> */
-  /* reads f.reads; */
-  /* reads pa.run.reads; */
-  /* reads pb.run.reads; */
-  /* requires forall a:A, b: B :: f.requires(a,b); */
-  /* requires forall s:string :: pa.run.requires(s); */
-  /* requires forall s:string :: pb.run.requires(s); */
-  /* ensures forall s:string :: Seq(pa, pb, f).run.requires(s); */
-  /* { */
-  /*   var cont: A -> B -> Parser<C> := a */
-  /*      => b */
-  /*     reads f.reads => Const(f(a,b)); */
-  /*   assert forall s: string, a: A, b: B :: cont(a)(b).run.reads(s) == {}; */
-  /*   var cont2: A -> Parser<C> := a */
-  /*     reads pb.run.reads */
-  /*     reads f.reads => Then<B,C>(pb, cont(a)); */
-  /*   assert forall s: string, a: A, b: B :: cont2(a).run.reads(s) <= pb.run.reads(s) + f.reads(a,b); */
-  /*   Then<A,C>(pa, cont2) */
+  function method Seq<A,B,C>(pa: Parser<A>, pb: Parser<B>, f: (A,B) -> C): Parser<C>
+  reads *;
+  requires forall a:A, b: B :: f.requires(a,b);
+  requires forall s:string :: pa.run.requires(s);
+  requires forall s:string :: pb.run.requires(s);
+  ensures forall s:string :: Seq(pa, pb, f).run.requires(s);
+  {
+    var cont: A -> B -> Parser<C> := a
+      reads * => b
+      reads * => Const(f(a,b));
+    var cont2: A -> Parser<C> := a
+      reads * => Then<B,C>(pb, cont(a));
+    Then<A,C>(pa, cont2)
 
-  /*   /1* Then<A,C>(pa, *1/ */
-  /*   /1* (a: A) reads pb.run.reads reads f.reads *1/ */
-  /*   /1*        requires forall s:string :: pb.run.requires(s) *1/ */
-  /*   /1*        requires forall b:B :: f.requires(a,b) *1/ */
-  /*   /1*  => Then<B,C>(pb, *1/ */
-  /*   /1* (b: B) reads f.reads requires f.requires(a,b) => Const(f(a,b)))) *1/ */
-  /* } */
+    /* Then<A,C>(pa, */
+    /* (a: A) reads pb.run.reads reads f.reads */
+    /*        requires forall s:string :: pb.run.requires(s) */
+    /*        requires forall b:B :: f.requires(a,b) */
+    /*  => Then<B,C>(pb, */
+    /* (b: B) reads f.reads requires f.requires(a,b) => Const(f(a,b)))) */
+  }
 
   /* function method ZeroOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
   /* decreases limit */
