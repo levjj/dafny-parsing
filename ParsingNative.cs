@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace @_0_Internal_Compile {
+namespace @_0_Helpers_Compile {
   public partial class @FileSystem {
     public static void ReadFile(char[] fname, out char[] result) {
       string sname = new string(fname);
