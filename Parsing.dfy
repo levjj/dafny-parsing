@@ -1,31 +1,9 @@
 module Parsing {
-  module Internal {
-    datatype Option<A> = Some(some: A) | None
-    datatype P<A> = P(run: string -> seq<(A, string)>)
+  datatype Parser<A> = Parser(run: string -> seq<(A, string)>)
 
-    function method SatP(pred: char -> bool): P<char>
-    reads pred.reads;
-    requires forall c:char :: pred.requires(c);
-    ensures forall s:string :: SatP(pred).run.requires(s);
-    {
-      P((s: string) reads pred.reads requires forall c:char :: pred.requires(c)
-                        => if |s| == 0 then []
-                            else if pred(s[0]) then [(s[0], s[1..])]
-                            else [])
-    }
+  datatype Option<A> = Some(some: A) | None
 
-    function method OrP<A>(p1: P<A>, p2: P<A>): P<A>
-    reads p1.run.reads;
-    reads p2.run.reads;
-    requires forall s:string :: p1.run.requires(s);
-    requires forall s:string :: p2.run.requires(s);
-    ensures forall s:string :: OrP(p1, p2).run.requires(s);
-    {
-      P((s: string) reads p1.run.reads reads p2.run.reads
-                    requires p1.run.requires(s) requires p2.run.requires(s)
-                    => p1.run(s) + p2.run(s))
-    }
-
+  module Helpers {
     function method Map<A,B>(a: seq<A>, f: A -> B): seq<B>
     reads f.reads;
     requires forall x: A :: f.requires(x)
@@ -40,145 +18,189 @@ module Parsing {
                   else a[0] + Flatten(a[1..])
     }
 
-    function method ConstP<A>(a: A): P<A>
-    ensures forall s:string :: ConstP(a).run.requires(s) && ConstP(a).run.reads(s) == {};
-    {
-      P((s: string)  => [(a, s)])
-    }
-
-    /* function method ThenP<A,B>(pa: P<A>, pb: A -> P<B>): P<B> */
-    /* reads pa.run.reads; */
-    /* reads pb.reads; */
-    /* requires forall s:string :: pa.run.requires(s); */
-    /* requires forall a:A, s:string :: pb(a).run.requires(s); */
-    /* ensures forall s:string :: ThenP(pa, pb).run.requires(s); */
-    /* { */
-    /*   P((s: string) reads * */
-    /*                 requires pa.run.requires(s) */
-    /*                 requires forall x: A :: pb.requires(x) */
-    /*                 requires forall a: A, s: string :: pb(a).run.requires(s) => */
-    /*   ( */
-    /*     var par: seq<(A, string)> := pa.run(s); */
-    /*     var pcomb: seq<seq<(B, string)>> := Map(par, (a_s: (A, string)) */
-    /*                     reads * */
-    /*                     requires forall x: A :: pb.requires(x) */
-    /*                     requires forall a: A, s: string :: pb(a).run.requires(s) */
-    /*                     => pb(a_s.0).run(a_s.1)); */
-    /*     Flatten(pcomb) */
-    /*   )) */
-    /* } */
-
-    /* function method ZeroOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
-    /* decreases limit */
-    /* { */
-    /*   var nothing: P<seq<A>> := ConstP([]); */
-    /*   if limit == 0 */
-    /*   then nothing */
-    /*   else OrP(nothing, OneOrMoreP<A>(p, limit - 1)) */
-    /* } */
-
-    /* function method OneOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
-    /* decreases limit */
-    /* { */
-    /*   ThenP<A,seq<A>>(p, (a: A) => */
-    /*     if limit == 0 */
-    /*     then ConstP([a]) */
-    /*     else ThenP<seq<A>,seq<A>>(ZeroOrMoreP(p, limit - 1), (aa: seq<A>) => */
-    /*          ConstP([a] + aa))) */
-    /* } */
-
     class FileSystem {
       extern static method ReadFile(name:array<char>) returns (contents: array<char>)
     }
   }
 
-  class Parser<A> {
-    var parser: Internal.P<A>;
+  function method Const<A>(a: A): Parser<A>
+  ensures forall s:string :: Const(a).run.requires(s);
+  ensures forall s:string :: Const(a).run.reads(s) == {};
+  {
+    Parser(s => [(a, s)])
+  }
 
-    constructor (a: A) modifies this
-    requires forall p: Parser<A>, s:string :: p != null ==> p.parser.run.requires(s) && !(this in p.parser.run.reads(s));
-    ensures forall p: Parser<A>, s:string :: p != null ==> p.parser.run.requires(s) && !(this in p.parser.run.reads(s));
-    {
-      parser := Internal.ConstP(a);
-    }
+  function method SatChar(pred: char -> bool): Parser<char>
+  reads pred.reads;
+  requires forall c:char :: pred.requires(c);
+  ensures forall s:string :: SatChar(pred).run.requires(s);
+  ensures forall s:string :: SatChar(pred).run.reads(s) <= if |s| > 0 then pred.reads(s[0]) else {};
+  {
+    Parser((s: string) reads if |s| > 0 then pred.reads(s[0]) else {}
+                      requires |s| > 0 ==> pred.requires(s[0])
+                      => if |s| == 0 then []
+                          else if pred(s[0]) then [(s[0], s[1..])]
+                          else [])
+  }
 
-    constructor P(p: Internal.P<A>) modifies this
-    requires forall s:string :: !(this in p.run.reads(s));
-    requires forall s:string :: p.run.requires(s);
-    ensures forall s:string :: parser.run.requires(s);
-    {
-      parser := p;
-    }
+  function method Or<A>(p1: Parser<A>, p2: Parser<A>): Parser<A>
+  reads p1.run.reads;
+  reads p2.run.reads;
+  requires forall s:string :: p1.run.requires(s);
+  requires forall s:string :: p2.run.requires(s);
+  ensures forall s:string :: Or(p1, p2).run.requires(s);
+  ensures forall s:string :: Or(p1, p2).run.reads(s) ==
+    (set s,o | o in p1.run.reads(s) + p2.run.reads(s) :: o)
+  {
+    Parser((s: string) reads p1.run.reads reads p2.run.reads
+                       requires p1.run.requires(s) requires p2.run.requires(s)
+                       => p1.run(s) + p2.run(s))
+  }
 
-    static method Char(c: char) returns (p: Parser<char>)
-    ensures p != null;
-    {
-      return new Parser<char>.P(Internal.SatP(c2 => c == c2));
-    }
+  function method Char(c: char): Parser<char>
+  ensures forall s:string :: Char(c).run.requires(s);
+  ensures forall s:string :: Char(c).run.reads(s) == {};
+  {
+    SatChar(c2 => c == c2)
+  }
 
-    static method Digit() returns (p: Parser<char>)
-    ensures p != null;
-    ensures forall s:string :: p.parser.run.requires(s);
-    {
-      return new Parser<char>.P(Internal.SatP(c => '0' <= c <= '9'));
-    }
+  function method Digit(): Parser<char>
+  ensures forall s:string :: Digit().run.requires(s);
+  ensures forall s:string :: Digit().run.reads(s) == {};
+  {
+    SatChar(c => '0' <= c <= '9')
+  }
 
-    static method Letter() returns (p: Parser<char>)
-    ensures p != null;
-    ensures forall s:string :: p.parser.run.requires(s);
-    {
-      return new Parser<char>.P(Internal.SatP(c => 'A' <= c <= 'Z' || 'a' <= c <= 'z' || c == '_'));
-    }
+  function method Letter(): Parser<char>
+  ensures forall s:string :: Letter().run.requires(s);
+  ensures forall s:string :: Letter().run.reads(s) == {};
+  {
+    SatChar(c => 'A' <= c <= 'Z' || 'a' <= c <= 'z' || c == '_')
+  }
 
-    /* method Then<B,C>(pb: Parser<B>, f: (A,B) -> C) returns (p: Parser<C>) */
-    /* requires pb != null */
-    /* ensures p != null; */
-    /* { */
-    /*   return new Parser<C>.P(Internal.ThenP(parser, */
-    /*     (a: A) reads pb => Internal.ThenP<B,C>(pb.parser, */
-    /*     (b: B) reads f.reads requires f.requires(a,b) => Internal.ConstP(f(a,b))))); */
-    /* } */
+  function method Then<A,B>(pa: Parser<A>, pb: A -> Parser<B>): Parser<B>
+  reads pa.run.reads;
+  reads pb.reads;
+  reads set a,s,o | o in pb(a).run.reads(s) :: o;
+  requires forall s:string :: pa.run.requires(s);
+  requires forall a:A :: pb.requires(a);
+  requires forall a:A, s:string :: pb(a).run.requires(s);
+  ensures forall s:string :: Then(pa, pb).run.requires(s);
+  ensures forall s:string :: Then(pa, pb).run.reads(s) <=
+    (set a,s,o | o in pa.run.reads(s) + pb.reads(a) + pb(a).run.reads(s) :: o);
+    /* pa.run.reads(s) + pb.reads + (set a,s,o | o in pb(a).run.reads(s) :: o); */
+  {
+    Parser((s: string)
+                  reads *
+                  requires pa.run.requires(s)
+                  requires forall a: A :: pb.requires(a)
+                  requires forall a: A, s: string :: pb(a).run.requires(s) =>
+    (
+      var par: seq<(A, string)> := pa.run(s);
+      var pcomb: seq<seq<(B, string)>> := Helpers.Map(par, (a_s: (A, string))
+                      reads pb.reads
+                      reads (set a,s,o | o in pb.reads(a) + pb(a).run.reads(s) :: o)
+                      requires forall a:A :: pb.requires(a)
+                      requires forall a:A, s:string :: pb(a).run.requires(s)
+                      => pb(a_s.0).run(a_s.1));
+      Helpers.Flatten(pcomb)
+    ))
+  }
 
-    /* method Or(parser2: Parser<A>) returns (p: Parser<A>) */
-    /* requires parser2 != null */
-    /* ensures p != null; */
-    /* { */
-    /*   return new Parser.P(Internal.OrP(parser, parser2.parser)); */
-    /* } */
+  /* function method Seq<A,B,C>(pa: Parser<A>, pb: Parser<B>, f: (A,B) -> C): Parser<C> */
+  /* reads f.reads; */
+  /* reads pa.run.reads; */
+  /* reads pb.run.reads; */
+  /* requires forall a:A, b: B :: f.requires(a,b); */
+  /* requires forall s:string :: pa.run.requires(s); */
+  /* requires forall s:string :: pb.run.requires(s); */
+  /* ensures forall s:string :: Seq(pa, pb, f).run.requires(s); */
+  /* { */
+  /*   var cont: A -> B -> Parser<C> := a */
+  /*      => b */
+  /*     reads f.reads => Const(f(a,b)); */
+  /*   assert forall s: string, a: A, b: B :: cont(a)(b).run.reads(s) == {}; */
+  /*   var cont2: A -> Parser<C> := a */
+  /*     reads pb.run.reads */
+  /*     reads f.reads => Then<B,C>(pb, cont(a)); */
+  /*   assert forall s: string, a: A, b: B :: cont2(a).run.reads(s) <= pb.run.reads(s) + f.reads(a,b); */
+  /*   Then<A,C>(pa, cont2) */
 
-    /* method OneOrMore() returns (p: Parser<seq<A>>) */
-    /* ensures p != null; */
-    /* { */
-    /*   return new Parser.P(Internal.ZeroOrMoreP(parser, 1000)); */
-    /* } */
+  /*   /1* Then<A,C>(pa, *1/ */
+  /*   /1* (a: A) reads pb.run.reads reads f.reads *1/ */
+  /*   /1*        requires forall s:string :: pb.run.requires(s) *1/ */
+  /*   /1*        requires forall b:B :: f.requires(a,b) *1/ */
+  /*   /1*  => Then<B,C>(pb, *1/ */
+  /*   /1* (b: B) reads f.reads requires f.requires(a,b) => Const(f(a,b)))) *1/ */
+  /* } */
 
-    /* method ZeroOrMore() returns (p: Parser<seq<A>>) */
-    /* ensures p != null; */
-    /* { */
-    /*   return new Parser.P(Internal.OneOrMoreP(parser, 1000)); */
-    /* } */
+  /* function method ZeroOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
+  /* decreases limit */
+  /* { */
+  /*   var nothing: P<seq<A>> := ConstP([]); */
+  /*   if limit == 0 */
+  /*   then nothing */
+  /*   else OrP(nothing, OneOrMoreP<A>(p, limit - 1)) */
+  /* } */
 
-    function method Parse(str: string): Internal.Option<A>
-    reads this
-    reads parser.run.reads;
-    requires parser.run.requires(str);
-    {
-      var results := parser.run(str);
-      if |results| == 0
-      then Internal.Option.None
-      else Internal.Option.Some(results[0].0)
-    }
+  /* function method OneOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
+  /* decreases limit */
+  /* { */
+  /*   ThenP<A,seq<A>>(p, (a: A) => */
+  /*     if limit == 0 */
+  /*     then ConstP([a]) */
+  /*     else ThenP<seq<A>,seq<A>>(ZeroOrMoreP(p, limit - 1), (aa: seq<A>) => */
+  /*          ConstP([a] + aa))) */
+  /* } */
 
-    /* method ParseFile(filename: string) returns (res: Internal.Option<A>) */
-    /* requires forall s : string :: parser.run.requires(s) */
-    /* { */
-    /*   var fname: array<char> := new char[|filename|]; */
-    /*   var contents: array<char> := Internal.FileSystem.ReadFile(fname); */
-    /*   if contents == null { return Internal.Option.None; } */
-    /*   assert forall s : string :: parser.run.requires(s); */
-    /*   var parseResult := Parse(contents[..]); */
-    /*   return parseResult; */
-    /* } */
+  /* method Or(parser2: Parser<A>) returns (p: Parser<A>) */
+  /* requires parser2 != null */
+  /* ensures p != null; */
+  /* { */
+  /*   return new Parser.P(Internal.OrP(parser, parser2.parser)); */
+  /* } */
+
+  /* method OneOrMore() returns (p: Parser<seq<A>>) */
+  /* ensures p != null; */
+  /* { */
+  /*   return new Parser.P(Internal.ZeroOrMoreP(parser, 1000)); */
+  /* } */
+
+  /* method ZeroOrMore() returns (p: Parser<seq<A>>) */
+  /* ensures p != null; */
+  /* { */
+  /*   return new Parser.P(Internal.OneOrMoreP(parser, 1000)); */
+  /* } */
+
+  function method Parse<A>(parser: Parser<A>, str: string): Option<A>
+  reads parser.run.reads;
+  requires parser.run.requires(str);
+  {
+    var results := parser.run(str);
+    if |results| == 0
+    then Option.None
+    else Option.Some(results[0].0)
+  }
+
+  method ParseFile<A>(parser: Parser<A>, filename: string) returns (res: Option<A>)
+  requires forall s : string :: parser.run.requires(s)
+  {
+    var fname: array<char> := new char[|filename|];
+    var contents: array<char> := Helpers.FileSystem.ReadFile(fname);
+    if contents == null { return Option.None; }
+    assert forall s : string :: parser.run.requires(s);
+    var parseResult := Parse(parser, contents[..]);
+    return parseResult;
+  }
+
+  default export Public {
+    Parser,
+    Const,
+    SatChar,
+    Or,
+    Char,
+    Digit,
+    Letter,
+    Parse
   }
 }
-
