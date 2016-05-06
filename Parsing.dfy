@@ -5,7 +5,7 @@ module Parsing {
 
   module Helpers {
     function method Map<A,B>(a: seq<A>, f: A -> B): seq<B>
-    reads f.reads;
+    reads *;
     requires forall x: A :: f.requires(x)
     {
       if |a| == 0 then []
@@ -25,7 +25,6 @@ module Parsing {
 
   function method Const<A>(a: A): Parser<A>
   ensures forall s:string :: Const(a).run.requires(s);
-  ensures forall s:string :: Const(a).run.reads(s) == {};
   {
     Parser(s => [(a, s)])
   }
@@ -40,18 +39,17 @@ module Parsing {
                        requires p.run.requires(s)
                        requires forall a: A :: f.requires(a)
                        => Helpers.Map(p.run(s),
-                                      (a_s: (A, string)) reads f.reads
+                                      (a_s: (A, string)) reads *
                                       requires forall a: A :: f.requires(a)
                                       => (f(a_s.0), a_s.1)))
   }
 
   function method SatChar(pred: char -> bool): Parser<char>
-  reads pred.reads;
+  reads *;
   requires forall c:char :: pred.requires(c);
   ensures forall s:string :: SatChar(pred).run.requires(s);
-  ensures forall s:string :: SatChar(pred).run.reads(s) <= if |s| > 0 then pred.reads(s[0]) else {};
   {
-    Parser((s: string) reads if |s| > 0 then pred.reads(s[0]) else {}
+    Parser((s: string) reads *
                        requires |s| > 0 ==> pred.requires(s[0])
                        => if |s| == 0 then []
                           else if pred(s[0]) then [(s[0], s[1..])]
@@ -59,36 +57,33 @@ module Parsing {
   }
 
   function method Or<A>(p1: Parser<A>, p2: Parser<A>): Parser<A>
-  reads p1.run.reads;
-  reads p2.run.reads;
+  reads *;
   requires forall s:string :: p1.run.requires(s);
   requires forall s:string :: p2.run.requires(s);
   ensures forall s:string :: Or(p1, p2).run.requires(s);
-  ensures forall s:string :: Or(p1, p2).run.reads(s) ==
-    (set s,o | o in p1.run.reads(s) + p2.run.reads(s) :: o)
   {
-    Parser((s: string) reads p1.run.reads reads p2.run.reads
+    Parser((s: string) reads *
                        requires p1.run.requires(s) requires p2.run.requires(s)
                        => p1.run(s) + p2.run(s))
   }
 
   function method Char(c: char): Parser<char>
+  reads *;
   ensures forall s:string :: Char(c).run.requires(s);
-  ensures forall s:string :: Char(c).run.reads(s) == {};
   {
     SatChar(c2 => c == c2)
   }
 
   function method Digit(): Parser<char>
+  reads *;
   ensures forall s:string :: Digit().run.requires(s);
-  ensures forall s:string :: Digit().run.reads(s) == {};
   {
     SatChar(c => '0' <= c <= '9')
   }
 
   function method Letter(): Parser<char>
+  reads *;
   ensures forall s:string :: Letter().run.requires(s);
-  ensures forall s:string :: Letter().run.reads(s) == {};
   {
     SatChar(c => 'A' <= c <= 'Z' || 'a' <= c <= 'z' || c == '_')
   }
@@ -213,8 +208,8 @@ module Parsing {
   }
 
   function method Parse<A>(parser: Parser<A>, str: string): Option<A>
-  reads parser.run.reads;
-  requires parser.run.requires(str);
+  reads *;
+  requires forall s:string :: parser.run.requires(s);
   {
     var results := parser.run(str);
     if |results| == 0
