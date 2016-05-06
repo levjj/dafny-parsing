@@ -30,6 +30,21 @@ module Parsing {
     Parser(s => [(a, s)])
   }
 
+  function method Map<A,B>(p: Parser<A>, f: A -> B): Parser<B>
+  reads *;
+  requires forall a: A :: f.requires(a);
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: Map(p, f).run.requires(s);
+  {
+    Parser((s: string) reads *
+                       requires p.run.requires(s)
+                       requires forall a: A :: f.requires(a)
+                       => Helpers.Map(p.run(s),
+                                      (a_s: (A, string)) reads f.reads
+                                      requires forall a: A :: f.requires(a)
+                                      => (f(a_s.0), a_s.1)))
+  }
+
   function method SatChar(pred: char -> bool): Parser<char>
   reads pred.reads;
   requires forall c:char :: pred.requires(c);
@@ -37,8 +52,8 @@ module Parsing {
   ensures forall s:string :: SatChar(pred).run.reads(s) <= if |s| > 0 then pred.reads(s[0]) else {};
   {
     Parser((s: string) reads if |s| > 0 then pred.reads(s[0]) else {}
-                      requires |s| > 0 ==> pred.requires(s[0])
-                      => if |s| == 0 then []
+                       requires |s| > 0 ==> pred.requires(s[0])
+                       => if |s| == 0 then []
                           else if pred(s[0]) then [(s[0], s[1..])]
                           else [])
   }
@@ -78,12 +93,12 @@ module Parsing {
     SatChar(c => 'A' <= c <= 'Z' || 'a' <= c <= 'z' || c == '_')
   }
 
-  function method Then<A,B>(pa: Parser<A>, pb: A -> Parser<B>): Parser<B>
+  function method Bind<A,B>(pa: Parser<A>, pb: A -> Parser<B>): Parser<B>
   reads *;
   requires forall s:string :: pa.run.requires(s);
   requires forall a:A :: pb.requires(a);
   requires forall a:A, s:string :: pb(a).run.requires(s);
-  ensures forall s:string :: Then(pa, pb).run.requires(s);
+  ensures forall s:string :: Bind(pa, pb).run.requires(s);
   {
     Parser((s: string)
                   reads *
@@ -108,58 +123,94 @@ module Parsing {
   requires forall s:string :: pb.run.requires(s);
   ensures forall s:string :: Seq(pa, pb, f).run.requires(s);
   {
-    var cont: A -> B -> Parser<C> := a
-      reads * => b
-      reads * => Const(f(a,b));
-    var cont2: A -> Parser<C> := a
-      reads * => Then<B,C>(pb, cont(a));
-    Then<A,C>(pa, cont2)
-
-    /* Then<A,C>(pa, */
-    /* (a: A) reads pb.run.reads reads f.reads */
-    /*        requires forall s:string :: pb.run.requires(s) */
-    /*        requires forall b:B :: f.requires(a,b) */
-    /*  => Then<B,C>(pb, */
-    /* (b: B) reads f.reads requires f.requires(a,b) => Const(f(a,b)))) */
+    var cont: A -> B -> Parser<C> :=
+      (a: A) reads *
+             requires forall b: B :: f.requires(a,b)
+             => (b: B) reads *
+                       requires f.requires(a,b)
+                       => Const(f(a,b));
+    Bind<A,C>(pa, (a: A) reads *
+                         requires forall a:A, b: B :: f.requires(a,b)
+                         requires forall s:string :: pb.run.requires(s)
+                         => Bind<B,C>(pb, cont(a)))
   }
 
-  /* function method ZeroOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
-  /* decreases limit */
-  /* { */
-  /*   var nothing: P<seq<A>> := ConstP([]); */
-  /*   if limit == 0 */
-  /*   then nothing */
-  /*   else OrP(nothing, OneOrMoreP<A>(p, limit - 1)) */
-  /* } */
+  function method Skip<A,B>(pa: Parser<A>, pb: Parser<B>): Parser<A>
+  reads *;
+  requires forall s:string :: pa.run.requires(s);
+  requires forall s:string :: pb.run.requires(s);
+  ensures forall s:string :: Skip(pa, pb).run.requires(s);
+  {
+    Seq<A,B,A>(pa, pb, (a, b) => a)
+  }
 
-  /* function method OneOrMoreP<A>(p: P<A>, limit: nat): P<seq<A>> */
-  /* decreases limit */
-  /* { */
-  /*   ThenP<A,seq<A>>(p, (a: A) => */
-  /*     if limit == 0 */
-  /*     then ConstP([a]) */
-  /*     else ThenP<seq<A>,seq<A>>(ZeroOrMoreP(p, limit - 1), (aa: seq<A>) => */
-  /*          ConstP([a] + aa))) */
-  /* } */
+  function method Then<A,B>(pa: Parser<A>, pb: Parser<B>): Parser<B>
+  reads *;
+  requires forall s:string :: pa.run.requires(s);
+  requires forall s:string :: pb.run.requires(s);
+  ensures forall s:string :: Then(pa, pb).run.requires(s);
+  {
+    Seq<A,B,B>(pa, pb, (a, b) => b)
+  }
 
-  /* method Or(parser2: Parser<A>) returns (p: Parser<A>) */
-  /* requires parser2 != null */
-  /* ensures p != null; */
-  /* { */
-  /*   return new Parser.P(Internal.OrP(parser, parser2.parser)); */
-  /* } */
+  function method SkipOptional<A,B>(pa: Parser<A>, pb: Parser<B>): Parser<A>
+  reads *;
+  requires forall s:string :: pa.run.requires(s);
+  requires forall s:string :: pb.run.requires(s);
+  ensures forall s:string :: Skip(pa, pb).run.requires(s);
+  {
+    Or(Skip(pa, pb), pa)
+  }
 
-  /* method OneOrMore() returns (p: Parser<seq<A>>) */
-  /* ensures p != null; */
-  /* { */
-  /*   return new Parser.P(Internal.ZeroOrMoreP(parser, 1000)); */
-  /* } */
+  function method ZeroOrMoreLim<A>(p: Parser<A>, limit: nat): Parser<seq<A>>
+  reads *;
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: ZeroOrMoreLim(p, limit).run.requires(s);
+  decreases limit
+  {
+    if limit == 0
+    then Const([])
+    else Or(OneOrMoreLim<A>(p, limit - 1), Const([]))
+  }
 
-  /* method ZeroOrMore() returns (p: Parser<seq<A>>) */
-  /* ensures p != null; */
-  /* { */
-  /*   return new Parser.P(Internal.OneOrMoreP(parser, 1000)); */
-  /* } */
+  function method OneOrMoreLim<A>(p: Parser<A>, limit: nat): Parser<seq<A>>
+  reads *;
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: OneOrMoreLim(p, limit).run.requires(s);
+  decreases limit
+  {
+    if limit == 0
+    then Const([])
+    else Seq<A, seq<A>, seq<A>>(p, ZeroOrMoreLim(p, limit - 1), (a, aa) => [a] + aa)
+  }
+
+  function method OneOrMore<A>(p: Parser<A>): Parser<seq<A>>
+  reads *;
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: OneOrMore(p).run.requires(s);
+  {
+    ZeroOrMoreLim(p, 1000)
+  }
+
+  function method ZeroOrMore<A>(p: Parser<A>): Parser<seq<A>>
+  reads *;
+  requires forall s:string :: p.run.requires(s);
+  ensures forall s:string :: ZeroOrMore(p).run.requires(s);
+  {
+    OneOrMoreLim(p, 1000)
+  }
+
+  function method Lazy<A>(f: () -> Parser<A>): Parser<A>
+  reads *;
+  requires f.requires();
+  requires forall s:string :: f().run.requires(s);
+  ensures forall s:string :: Lazy(f).run.requires(s);
+  {
+    Parser((s: string) reads *
+                       requires f.requires()
+                       requires f().run.requires(s)
+                       => f().run(s))
+  }
 
   function method Parse<A>(parser: Parser<A>, str: string): Option<A>
   reads parser.run.reads;
@@ -182,14 +233,21 @@ module Parsing {
     return parseResult;
   }
 
-  default export Public {
-    Parser,
-    Const,
-    SatChar,
-    Or,
-    Char,
-    Digit,
-    Letter,
-    Parse
-  }
+  /* default export Public { */
+  /*   Parser, */
+  /*   Const, */
+  /*   SatChar, */
+  /*   Or, */
+  /*   Char, */
+  /*   Digit, */
+  /*   Letter, */
+  /*   Then, */
+  /*   Map, */
+  /*   Skip, */
+  /*   Seq, */
+  /*   ZeroOrMore, */
+  /*   OneOrMore, */
+  /*   Parse, */
+  /*   ParseFile */
+  /* } */
 }
