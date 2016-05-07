@@ -60,6 +60,14 @@ namespace @_0_Parsing_Compile {
       });
     }
 
+    public Parser<D> Seq3<B,C,D>(Parser<B> pb, Parser<C> pc, Func<A, B, C, D> f) {
+      return Bind(a => {
+        return pb.Bind(b => {
+          return pc.Bind(c => @_0_Parsing_Compile.Parse.Const(f(a,b,c)));
+        });
+      });
+    }
+
     public Parser<A> Skip<B>(Parser<B> pb) {
       return Seq(pb, (a,b) => a);
     }

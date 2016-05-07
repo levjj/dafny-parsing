@@ -18,6 +18,11 @@ module Parsing {
     requires pb != null
     ensures Seq(pb, f) != null
 
+    extern function method Seq3<B,C,D>(pb: Parser<B>, pc: Parser<C>, f: (A, B, C) -> D): Parser<D>
+    requires pb != null
+    requires pc != null
+    ensures Seq3(pb, pc, f) != null
+
     extern function method Skip<B>(pb: Parser<B>): Parser<A>
     requires pb != null
     ensures Skip(pb) != null
@@ -40,6 +45,9 @@ module Parsing {
 
     extern function method ParseFile(filename: array<char>): Option<A>
     ensures ParseFile(filename) != null
+
+    extern function method ParseCmdLine(): Option<A>
+    ensures ParseCmdLine() != null
   }
   class Parse {
     extern static function method Const<A>(a: A): Parser<A>
@@ -56,6 +64,12 @@ module Parsing {
 
     extern static function method Letter(): Parser<char>
     ensures Letter() != null
+
+    extern static function method Decimal(): Parser<int>
+    ensures Decimal() != null
+
+    extern static function method Keyword(str: string): Parser<string>
+    ensures Keyword(str) != null
 
     extern static function method Fix<A>(f: Parser<A> -> Parser<A>): Parser<A>
     ensures Fix(f) != null
