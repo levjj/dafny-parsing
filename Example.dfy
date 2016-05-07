@@ -7,47 +7,44 @@ module Example {
 
   method Main() {
     // single characters
-    print Parse(Digit(), "5"); // Some(5)
+    var digit: Parser<char> := Parse.Digit();
+    print digit.Parse("5"); // Some(5)
     print "\n";
-    print Parse(Digit(), "X"); // None
+    print digit.Parse("X"); // None
     print "\n";
-    var digitOrLetter: Parser<char> := Or(Digit(), Letter());
-    print Parse(digitOrLetter, "X"); // Some(X)
+    var digitOrLetter: Parser<char> := digit.Or(Parse.Letter());
+    print digitOrLetter.Parse("X"); // Some(X)
     print "\n";
-    print Parse(digitOrLetter, "+"); // None
+    print digitOrLetter.Parse("+"); // None
     print "\n";
 
     // identifiers
-    var id: Parser<string> := Seq(Letter(),
-                                  ZeroOrMore(digitOrLetter),
-                                  (s, ss) => [s] + ss);
-    print Parse(id, "x23"); // Some(x23)
+    var id: Parser<string> := Parse.Letter().Seq(
+                                  digitOrLetter.ZeroOrMore(),
+                                  (c: char, s: string) => [c] + s);
+    print id.Parse("x23"); // Some(x23)
     print "\n";
-    print Parse(id, "a_s"); // Some(a_s)
+    print id.Parse("a_s"); // Some(a_s)
     print "\n";
-    print Parse(id, "12a"); // None
+    print id.Parse("12a"); // None
     print "\n";
 
     // s-expressions
-    var sexpr: Parser<SExpr> := ZComb((sexp: Parser<SExpr>)
-      reads * requires forall s:string :: sexp.run.requires(s)
-      => (
-      var atom: Parser<SExpr> := Map(OneOrMore(digitOrLetter), s => Atom(s));
+    var sexpr: Parser<SExpr> := Parse.Fix((sexp: Parser<SExpr>) requires sexp != null => (
+      var atom: Parser<SExpr> := digitOrLetter.OneOrMore().Map(s => Atom(s));
       var lst: Parser<SExpr> :=
-        Skip(Then(Char('('),
-                  Map(ZeroOrMore(sexp), l => List(l))),
-            Char(')'));
-      SkipWS(Or(atom, lst))));
+           Parse.Char('(')
+             .Then(sexp.ZeroOrMore().Map(l => List(l)))
+             .Skip(Parse.Char(')'));
+      atom.Or(lst).SkipWS()));
 
-    print Parse(sexpr, "x23");     // Some(Atom(x23))
+    print sexpr.Parse("x23");     // Some(Atom(x23))
     print "\n";
-    print Parse(sexpr, "(a b c)"); // Some(List(Atom(a),Atom(b),Atom(c)))
+    print sexpr.Parse("(a b c)"); // Some(List(Atom(a),Atom(b),Atom(c)))
     print "\n";
-    print Parse(sexpr, "((a) b)"); // Some(List(List(Atom(a)),Atom(b)))
+    print sexpr.Parse("((a) b)"); // Some(List(List(Atom(a)),Atom(b)))
     print "\n";
-    print Parse(sexpr, "((");      // None
+    print sexpr.Parse("((");      // None
     print "\n";
-
-    print Parse(ZeroOrMore(sexpr), "a b c"); // Some(List(Atom(a),Atom(b),Atom(c)))
   }
 }
