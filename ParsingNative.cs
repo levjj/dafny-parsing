@@ -141,9 +141,25 @@ namespace @_0_Parsing_Compile {
       return SatChar(c => 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || c == '_');
     }
 
-    /*public static Parser<string> Keyword(string kw) {
-      
-    }*/
+    public static Parser<int> Decimal() {
+      Parser<int> digits = Digit().OneOrMore().Map(cs => {
+        int res = 0;
+        foreach (char c in cs.Elements) {
+          res *= 10;
+          res += c - '0';
+        }
+        return res;
+      });
+      return digits.Or(Char('-').Then(digits).Map(d => -d));
+    }
+
+    public static Parser<Sequence<char>> Keyword(Sequence<char> kw) {
+      Parser<Sequence<char>> res = Const(Sequence<char>.Empty);
+      foreach (char c in kw.Elements) {
+        res = res.Seq(Char(c), (cs, c2) => cs.Concat(Sequence<char>.FromElements(c2)));
+      }
+      return res;
+    }
 
     public static Parser<A> Fix<A>(Func<Parser<A>, Parser<A>> f) {
       return new Parser<A>(s => f(Fix(f)).p(s));
