@@ -101,6 +101,15 @@ namespace @_0_Parsing_Compile {
       string sname = filename.ToString();
       return Parse(File.ReadAllText(sname));
     }
+
+    public Option<A> ParseCmdLine() {
+      String[] arguments = Environment.GetCommandLineArgs();
+      if (arguments.Length <= 1) {
+        return Parse(Console.In.ReadToEnd());
+      } else {
+        return Parse(File.ReadAllText(arguments[1]));
+      }
+    }
   }
 
   public partial class Parse {
